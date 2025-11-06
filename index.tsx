@@ -1,50 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI, Modality } from "@google/genai";
-
-// Declare aistudio types for typescript
-// Fix: Use a named interface 'AIStudio' to avoid type conflicts with other declarations.
-// This resolves the error about subsequent property declarations needing the same type.
-declare global {
-    interface AIStudio {
-        hasSelectedApiKey: () => Promise<boolean>;
-        openSelectKey: () => Promise<void>;
-    }
-    interface Window {
-        aistudio: AIStudio;
-    }
-}
 
 type Result = {
     type: 'image' | 'video';
     src: string;
 };
 
+type Point = {
+    x: number;
+    y: number;
+};
+
 const App = () => {
-    // State management with local storage persistence
-    const [generationMode, setGenerationMode] = useState<'static' | 'animated'>('static');
-    const [apiKeySelected, setApiKeySelected] = useState(false);
+    // State management
+    const [generationMode, setGenerationMode] = useState<'static' | 'animated' | 'modification'>('static');
     
+    // Settings with local storage persistence
     const [prompt, setPrompt] = useState(() => localStorage.getItem('aboelmakarem-ai-prompt') || '');
     const [negativePrompt, setNegativePrompt] = useState(() => localStorage.getItem('aboelmakarem-ai-negativePrompt') || '');
     const [lighting, setLighting] = useState(() => localStorage.getItem('aboelmakarem-ai-lighting') || 'Cinematic');
     const [colorStyle, setColorStyle] = useState(() => localStorage.getItem('aboelmakarem-ai-colorStyle') || 'Standard');
     const [artStyle, setArtStyle] = useState(() => localStorage.getItem('aboelmakarem-ai-artStyle') || 'Photorealistic');
+    const [photographyStyle, setPhotographyStyle] = useState(() => localStorage.getItem('aboelmakarem-ai-photographyStyle') || 'General');
+    const [cameraAngle, setCameraAngle] = useState(() => localStorage.getItem('aboelmakarem-ai-cameraAngle') || 'Eye-level');
     const [aspectRatio, setAspectRatio] = useState(() => localStorage.getItem('aboelmakarem-ai-aspectRatio') || '1:1');
     const [highQuality, setHighQuality] = useState(() => {
         const saved = localStorage.getItem('aboelmakarem-ai-highQuality');
         return saved ? JSON.parse(saved) : false;
     });
     
+    // Input images
     const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
     const [productImage, setProductImage] = useState<string | null>(null);
     const [animatedInput, setAnimatedInput] = useState<string | null>(null);
+    const [modificationImage, setModificationImage] = useState<string | null>(null);
 
+    // App status
     const [results, setResults] = useState<Result[]>([]);
     const [loading, setLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [upscalingIndex, setUpscalingIndex] = useState<number | null>(null);
+
+    // Canvas/Masking state
+    const imageCanvasRef = useRef<HTMLCanvasElement>(null);
+    const maskCanvasRef = useRef<HTMLCanvasElement>(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [brushSize, setBrushSize] = useState(30);
+    const lastPointRef = useRef<Point | null>(null);
 
     // Save settings to local storage whenever they change
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-prompt', prompt); }, [prompt]);
@@ -52,51 +56,17 @@ const App = () => {
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-lighting', lighting); }, [lighting]);
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-colorStyle', colorStyle); }, [colorStyle]);
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-artStyle', artStyle); }, [artStyle]);
+    useEffect(() => { localStorage.setItem('aboelmakarem-ai-photographyStyle', photographyStyle); }, [photographyStyle]);
+    useEffect(() => { localStorage.setItem('aboelmakarem-ai-cameraAngle', cameraAngle); }, [cameraAngle]);
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-aspectRatio', aspectRatio); }, [aspectRatio]);
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-highQuality', JSON.stringify(highQuality)); }, [highQuality]);
 
-    // Check for API key when switching to animated mode
-    useEffect(() => {
-        if (generationMode === 'animated') {
-            const checkApiKey = async () => {
-                const hasKey = await window.aistudio.hasSelectedApiKey();
-                setApiKeySelected(hasKey);
-            };
-            checkApiKey();
-        }
-    }, [generationMode]);
-
-
     // Options
-    const lightingOptions = [
-        { value: 'Cinematic', label: 'سينمائي' },
-        { value: 'Studio Softbox', label: 'ستوديو (Softbox)' },
-        { value: 'Natural Daylight', label: 'ضوء النهار الطبيعي' },
-        { value: 'Golden Hour', label: 'الساعة الذهبية' },
-        { value: 'Blue Hour', label: 'الساعة الزرقاء' },
-        { value: 'High-key', label: 'إضاءة عالية (High-key)' },
-        { value: 'Low-key', label: 'إضاءة منخفضة (Low-key)' },
-        { value: 'Hard Shadow', label: 'ظلال حادة' },
-        { value: 'Rim Lighting', label: 'إضاءة حافة' },
-    ];
-    const colorStyleOptions = [
-        { value: 'Standard', label: 'عادي' },
-        { value: 'Vibrant', label: 'ألوان زاهية' },
-        { value: 'Muted Tones', label: 'ألوان هادئة' },
-        { value: 'Warm Tones', label: 'درجات دافئة' },
-        { value: 'Cool Tones', label: 'درجات باردة' },
-        { value: 'Black and White', label: 'أبيض وأسود' },
-        { value: 'Sepia', label: 'سيبيا' },
-    ];
-    const artStyleOptions = [
-        { value: 'Photorealistic', label: 'واقعي جداً' },
-        { value: 'Anime/Manga', label: 'أنمي/مانجا' },
-        { value: 'Oil Painting', label: 'لوحة زيتية' },
-        { value: 'Watercolor', label: 'ألوان مائية' },
-        { value: 'Cyberpunk', label: 'سايبربانك' },
-        { value: 'Fantasy Art', label: 'فن خيالي' },
-        { value: 'Minimalist', label: 'تبسيطي' },
-    ];
+    const lightingOptions = [ { value: 'Cinematic', label: 'سينمائي' }, { value: 'Studio Softbox', label: 'ستوديو (Softbox)' }, { value: 'Natural Daylight', label: 'ضوء النهار الطبيعي' }, { value: 'Golden Hour', label: 'الساعة الذهبية' }, { value: 'Blue Hour', label: 'الساعة الزرقاء' }, { value: 'High-key', label: 'إضاءة عالية (High-key)' }, { value: 'Low-key', label: 'إضاءة منخفضة (Low-key)' }, { value: 'Hard Shadow', label: 'ظلال حادة' }, { value: 'Rim Lighting', label: 'إضاءة حافة' }];
+    const colorStyleOptions = [ { value: 'Standard', label: 'عادي' }, { value: 'Vibrant', label: 'ألوان زاهية' }, { value: 'Muted Tones', label: 'ألوان هادئة' }, { value: 'Warm Tones', label: 'درجات دافئة' }, { value: 'Cool Tones', label: 'درجات باردة' }, { value: 'Black and White', label: 'أبيض وأسود' }, { value: 'Sepia', label: 'سيبيا' }];
+    const artStyleOptions = [ { value: 'Photorealistic', label: 'واقعي جداً' }, { value: 'Anime/Manga', label: 'أنمي/مانجا' }, { value: 'Oil Painting', label: 'لوحة زيتية' }, { value: 'Watercolor', label: 'ألوان مائية' }, { value: 'Cyberpunk', label: 'سايبربانك' }, { value: 'Fantasy Art', label: 'فن خيالي' }, { value: 'Minimalist', label: 'تبسيطي' }];
+    const photographyStyleOptions = [ { value: 'General', label: 'عام' }, { value: 'Portrait', label: 'بورتريه' }, { value: 'Landscape', label: 'منظر طبيعي' }, { value: 'Macro', label: 'تصوير مقرب (ماكرو)' }, { value: 'Street Photography', label: 'تصوير الشارع' }, { value: 'Architectural', label: 'تصوير معماري' }];
+    const cameraAngleOptions = [ { value: 'Eye-level', label: 'مستوى العين' }, { value: 'High-angle', label: 'زاوية مرتفعة' }, { value: 'Low-angle', label: 'زاوية منخفضة' }, { value: 'Dutch angle', label: 'زاوية مائلة' }, { value: 'Birds-eye view', label: 'منظور عين الطائر' }];
     const staticAspectRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
     const animatedAspectRatios = ['16:9', '9:16', '1:1'];
 
@@ -110,11 +80,6 @@ const App = () => {
             reader.readAsDataURL(file);
         }
     };
-
-    const handleSelectApiKey = async () => {
-        await window.aistudio.openSelectKey();
-        setApiKeySelected(true); // Assume success to avoid race conditions. The API call will fail if it's not set.
-    };
     
     // Core Generation Logic
     const handleGenerateStatic = async () => {
@@ -122,9 +87,7 @@ const App = () => {
             setError('الرجاء إدخال وصف أو رفع صورة واحدة على الأقل.');
             return;
         }
-        setLoading(true);
-        setError(null);
-        setResults([]);
+        setLoading(true); setError(null); setResults([]);
 
         const generateImage = async (parts: any[]) => {
             try {
@@ -149,21 +112,18 @@ const App = () => {
         };
 
         try {
-            const loadingMessages = [
-                "تحليل المدخلات...", "تحليل الوصف...", "تحضير النمط العام...",
-                "إنشاء النتيجة الأولى...", "إنشاء النتيجة الثانية...", "اللمسات الأخيرة..."
-            ];
+            const loadingMessages = [ "تحليل المدخلات...", "تحليل الوصف...", "تحضير النمط العام...", "إنشاء النتيجة الأولى...", "إنشاء النتيجة الثانية...", "اللمسات الأخيرة..."];
             for (let i = 0; i < loadingMessages.length; i++) {
                 setLoadingMessage(`الخطوة ${i + 1} من ${loadingMessages.length}: ${loadingMessages[i]}`);
                 await new Promise(res => setTimeout(res, 300));
             }
 
-            let basePrompt = `أنت مخرج فني محترف وخبير في التصوير الفوتوغرافي للمنتجات. مهمتك هي إنشاء صورة مذهلة بصريًا.`;
+            let basePrompt = `أنت مخرج فني محترف وخبير في التصوير الفوتوغرافي. مهمتك هي إنشاء صورة مذهلة بصريًا.`;
             if (highQuality) {
                 basePrompt += ` استهدف جودة 4K فائقة الواقعية، مع تفاصيل دقيقة وإضاءة سينمائية وتصيير فوتوغرافي.`;
             }
 
-            let constructedPrompt = `${basePrompt} الوصف: "${prompt.trim()}". النمط الفني: ${artStyle}. تعديل الألوان: ${colorStyle}. الإضاءة: ${lighting}. نسبة العرض إلى الارتفاع: ${aspectRatio}.`;
+            let constructedPrompt = `${basePrompt} الوصف: "${prompt.trim()}". النمط الفني: ${artStyle}. نمط التصوير: ${photographyStyle}. زاوية الكاميرا: ${cameraAngle}. تعديل الألوان: ${colorStyle}. الإضاءة: ${lighting}. نسبة العرض إلى الارتفاع: ${aspectRatio}.`;
             if (negativePrompt.trim()) constructedPrompt += ` | تجنب تمامًا ما يلي: ${negativePrompt.trim()}.`;
 
             const parts: any[] = [];
@@ -186,10 +146,9 @@ const App = () => {
             }
         } catch (e) {
             console.error(e);
-            setError('حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.');
+            setError('حدث خطأ غير متوقع. يرجى التأكد من صحة مفتاح API والمحاولة مرة أخرى.');
         } finally {
-            setLoading(false);
-            setLoadingMessage('');
+            setLoading(false); setLoadingMessage('');
         }
     };
 
@@ -198,28 +157,19 @@ const App = () => {
             setError('الرجاء إدخال وصف أو رفع صورة للبدء.');
             return;
         }
-        setLoading(true);
-        setError(null);
-        setResults([]);
+        setLoading(true); setError(null); setResults([]);
 
         try {
-            setLoadingMessage('التحقق من مفتاح API...');
+            setLoadingMessage('إعداد نموذج الفيديو...');
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
             const payload: any = {
                 model: 'veo-3.1-fast-generate-preview',
                 prompt: `مهمتك هي إنشاء فيديو قصير مذهل بناءً على الوصف التالي: "${prompt.trim()}". النمط الفني المطلوب: ${artStyle}. نمط الألوان: ${colorStyle}. تجنب تمامًا: ${negativePrompt.trim()}`,
-                config: {
-                    numberOfVideos: 1,
-                    resolution: '720p',
-                    aspectRatio: aspectRatio as '16:9' | '9:16' | '1:1',
-                }
+                config: { numberOfVideos: 1, resolution: '720p', aspectRatio: aspectRatio as '16:9' | '9:16' | '1:1' }
             };
             if (animatedInput) {
-                payload.image = {
-                    imageBytes: animatedInput.split(',')[1],
-                    mimeType: animatedInput.split(';')[0].split(':')[1],
-                };
+                payload.image = { imageBytes: animatedInput.split(',')[1], mimeType: animatedInput.split(';')[0].split(':')[1] };
             }
             
             setLoadingMessage('إرسال الطلب إلى نموذج الفيديو...');
@@ -245,28 +195,77 @@ const App = () => {
 
         } catch (e: any) {
             console.error(e);
-             if (e.message?.includes("Requested entity was not found")) {
-                setError('فشل التحقق من مفتاح API. الرجاء اختياره مرة أخرى.');
-                setApiKeySelected(false);
-            } else {
-                setError('حدث خطأ أثناء إنشاء الفيديو. يرجى المحاولة مرة أخرى.');
-            }
+            setError('حدث خطأ أثناء إنشاء الفيديو. يرجى التأكد من صلاحية مفتاح API والمحاولة مرة أخرى.');
         } finally {
-            setLoading(false);
-            setLoadingMessage('');
+            setLoading(false); setLoadingMessage('');
+        }
+    };
+
+    const handleGenerateModification = async () => {
+        if (!prompt.trim() || !modificationImage) {
+            setError('الرجاء رفع صورة وإدخال وصف للتعديل.');
+            return;
+        }
+        setLoading(true); setError(null); setResults([]);
+
+        try {
+            setLoadingMessage('تحضير قناع التعديل...');
+            // Create a mask image from the mask canvas
+            const maskCanvas = maskCanvasRef.current;
+            if (!maskCanvas) throw new Error("Mask canvas not found.");
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = maskCanvas.width;
+            tempCanvas.height = maskCanvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            if (!tempCtx) throw new Error("Could not get context for temp canvas.");
+
+            // Create a black background
+            tempCtx.fillStyle = 'black';
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            // Draw the user's strokes in white
+            tempCtx.globalCompositeOperation = 'source-over';
+            tempCtx.drawImage(maskCanvas, 0, 0);
+
+            const maskDataUrl = tempCanvas.toDataURL('image/png');
+            
+            const modificationPrompt = `أنت خبير تعديل صور احترافي. مهمتك هي تعديل الصورة الأصلية بناءً على القناع والوصف. المناطق البيضاء في صورة القناع هي فقط ما يجب تعديله. حافظ على المناطق السوداء كما هي تمامًا. الوصف: "${prompt.trim()}". النمط الفني: ${artStyle}.`;
+
+            const parts = [
+                { text: modificationPrompt },
+                { inlineData: { mimeType: modificationImage.split(';')[0].split(':')[1], data: modificationImage.split(',')[1] } },
+                { inlineData: { mimeType: 'image/png', data: maskDataUrl.split(',')[1] } }
+            ];
+
+            setLoadingMessage('جاري تنفيذ التعديل...');
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash-image',
+                contents: [{ parts }],
+                config: { responseModalities: [Modality.IMAGE] },
+            });
+
+            const modifiedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            if (modifiedImagePart?.inlineData) {
+                const imageUrl = `data:${modifiedImagePart.inlineData.mimeType};base64,${modifiedImagePart.inlineData.data}`;
+                setResults([{ type: 'image', src: imageUrl }]);
+            } else {
+                setError('فشل تعديل الصورة. حاول مرة أخرى بوصف مختلف.');
+            }
+
+        } catch(e) {
+            console.error(e);
+            setError('حدث خطأ أثناء تعديل الصورة. يرجى التأكد من صلاحية مفتاح API.');
+        } finally {
+            setLoading(false); setLoadingMessage('');
         }
     };
     
     const handleUpscale = async (imageUrl: string, index: number) => {
-        setUpscalingIndex(index);
-        setError(null);
-        
+        setUpscalingIndex(index); setError(null);
         try {
             const upscalePrompt = "مهمتك كخبير تحسين صور: قم برفع جودة هذه الصورة إلى أقصى دقة ممكنة (Ultra HD)، مع زيادة الحدة والوضوح والتفاصيل دون إدخال أي عناصر جديدة أو تغيير المحتوى الأصلي.";
-            const upscaleParts = [
-                { text: upscalePrompt },
-                { inlineData: { mimeType: imageUrl.split(';')[0].split(':')[1], data: imageUrl.split(',')[1] } }
-            ];
+            const upscaleParts = [ { text: upscalePrompt }, { inlineData: { mimeType: imageUrl.split(';')[0].split(':')[1], data: imageUrl.split(',')[1] } } ];
             
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
             const response = await ai.models.generateContent({
@@ -294,33 +293,96 @@ const App = () => {
         }
     }
 
+    // Canvas drawing logic
+    useEffect(() => {
+        const imageCanvas = imageCanvasRef.current;
+        const maskCanvas = maskCanvasRef.current;
+        if (!imageCanvas || !maskCanvas || !modificationImage) return;
+
+        const image = new Image();
+        image.src = modificationImage;
+        image.onload = () => {
+            const ctx = imageCanvas.getContext('2d');
+            const maskCtx = maskCanvas.getContext('2d');
+            if (!ctx || !maskCtx) return;
+            
+            imageCanvas.width = image.width;
+            imageCanvas.height = image.height;
+            maskCanvas.width = image.width;
+            maskCanvas.height = image.height;
+            
+            ctx.drawImage(image, 0, 0);
+            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+        };
+    }, [modificationImage]);
+
+    const getPoint = (e: React.MouseEvent<HTMLCanvasElement>): Point => {
+        const canvas = maskCanvasRef.current!;
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: (e.clientX - rect.left) * (canvas.width / rect.width),
+            y: (e.clientY - rect.top) * (canvas.height / rect.height)
+        };
+    };
+
+    const drawLine = (start: Point, end: Point) => {
+        const ctx = maskCanvasRef.current?.getContext('2d');
+        if (!ctx) return;
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.strokeStyle = `rgba(255, 255, 255, 0.7)`;
+        ctx.lineWidth = brushSize;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+    };
+
+    const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        setIsDrawing(true);
+        const point = getPoint(e);
+        lastPointRef.current = point;
+        drawLine(point, point); // Draw a dot
+    };
+
+    const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (!isDrawing) return;
+        const currentPoint = getPoint(e);
+        if (lastPointRef.current) {
+            drawLine(lastPointRef.current, currentPoint);
+        }
+        lastPointRef.current = currentPoint;
+    };
+    
+    const handleMouseUp = () => { setIsDrawing(false); lastPointRef.current = null; };
+    const handleClearMask = () => {
+        const ctx = maskCanvasRef.current?.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    };
+
+
     // Components
     const FileUploader = ({ id, label, image, setter, icon, accept = "image/*", isFullWidth = false }: { id: string, label: string, image: string | null, setter: React.Dispatch<React.SetStateAction<string | null>>, icon: React.ReactElement, accept?: string, isFullWidth?: boolean }) => (
         <div className="form-group">
-            <div className="form-group-header">
-                {icon}
-                <label htmlFor={id}>{label}</label>
-            </div>
+            <div className="form-group-header"> {icon} <label htmlFor={id}>{label}</label> </div>
             {image ? (
                 <div className={`image-preview-container ${isFullWidth ? 'full-width' : ''}`}>
                     <img src={image} alt="preview" className="image-preview" />
                     <button className="clear-image-btn" onClick={() => setter(null)} disabled={loading}>&times;</button>
                 </div>
-            ) : (
-                <>
-                    <input type="file" id={id} className="file-upload-input" onChange={(e) => handleFileChange(e, setter)} accept={accept} disabled={loading} />
-                    <label htmlFor={id} className="file-upload-label">اختر ملف</label>
-                </>
-            )}
+            ) : ( <> <input type="file" id={id} className="file-upload-input" onChange={(e) => handleFileChange(e, setter)} accept={accept} disabled={loading} /> <label htmlFor={id} className="file-upload-label">اختر ملف</label> </> )}
         </div>
     );
     
     // Render Logic
-    const isGenerateDisabled = loading || (generationMode === 'static' && !prompt.trim() && !backgroundImage && !productImage) || (generationMode === 'animated' && (!prompt.trim() && !animatedInput)) || (generationMode === 'animated' && !apiKeySelected);
+    const isGenerateDisabled = loading || 
+        (generationMode === 'static' && !prompt.trim() && !backgroundImage && !productImage) || 
+        (generationMode === 'animated' && (!prompt.trim() && !animatedInput)) ||
+        (generationMode === 'modification' && (!prompt.trim() || !modificationImage));
     const currentAspectRatios = generationMode === 'static' ? staticAspectRatios : animatedAspectRatios;
     
     useEffect(() => {
-        if (!currentAspectRatios.includes(aspectRatio)) {
+        if (generationMode !== 'modification' && !currentAspectRatios.includes(aspectRatio)) {
             setAspectRatio(currentAspectRatios[0]);
         }
     }, [generationMode, aspectRatio, currentAspectRatios]);
@@ -328,9 +390,7 @@ const App = () => {
 
     return (
         <div className="app-container">
-            <header className="app-header">
-                <h1 className="app-title">aboelmakarem ai</h1>
-            </header>
+            <header className="app-header"><h1 className="app-title">aboelmakarem ai</h1></header>
             <main className="main-container">
                 <aside className="controls-panel">
                     <div className="form-section-title">لوحة التحكم</div>
@@ -339,33 +399,46 @@ const App = () => {
                         <label>وضع الإنشاء</label>
                         <div className="mode-selector">
                            <button className={generationMode === 'static' ? 'active' : ''} onClick={() => setGenerationMode('static')} disabled={loading}>صورة ثابتة</button>
-                           <button className={generationMode === 'animated' ? 'active' : ''} onClick={() => setGenerationMode('animated')} disabled={loading}>صورة متحركة (فيديو)</button>
+                           <button className={generationMode === 'animated' ? 'active' : ''} onClick={() => setGenerationMode('animated')} disabled={loading}>فيديو</button>
+                           <button className={generationMode === 'modification' ? 'active' : ''} onClick={() => setGenerationMode('modification')} disabled={loading}>تعديل صورة</button>
                         </div>
                     </div>
 
-                    {generationMode === 'animated' && !apiKeySelected && (
-                        <div className="api-key-prompt">
-                            <p>لإنشاء الفيديوهات، يجب اختيار مفتاح API خاص بك.</p>
-                             <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer">تعرف على الأسعار والفوترة</a>
-                            <button onClick={handleSelectApiKey} disabled={loading}>اختيار مفتاح API</button>
-                        </div>
-                    )}
-
                     <div className="form-group">
-                       <label htmlFor="prompt-input">1. أدخل وصف {generationMode === 'static' ? 'الصورة' : 'الفيديو'}</label>
+                       <label htmlFor="prompt-input">1. أدخل وصف {generationMode === 'modification' ? 'التعديل' : (generationMode === 'static' ? 'الصورة' : 'الفيديو')}</label>
                        <textarea id="prompt-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="مثال: كرسي ألعاب احترافي باللون الأسود والأحمر في غرفة مضاءة بالنيون" rows={4} disabled={loading} />
                     </div>
                     
-                    {generationMode === 'static' ? (
+                    {generationMode === 'static' && (
                         <div className="form-group">
                            <label>2. ارفع الصور (اختياري)</label>
                            <div style={{display: 'flex', gap: '1rem'}}>
-                             <FileUploader id="background-image" label="صورة الخلفية" image={backgroundImage} setter={setBackgroundImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/><path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/></svg>} />
-                             <FileUploader id="product-image" label="صورة المنتج" image={productImage} setter={setProductImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5 8.186 1.113zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464z"/></svg>} />
+                             <FileUploader id="background-image" label="الخلفية" image={backgroundImage} setter={setBackgroundImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/><path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/></svg>} />
+                             <FileUploader id="product-image" label="المنتج" image={productImage} setter={setProductImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5 8.186 1.113zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464z"/></svg>} />
                            </div>
                         </div>
-                    ) : (
-                        <FileUploader id="animated-input" label="2. ارفع صورة للتحريك (اختياري)" image={animatedInput} setter={setAnimatedInput} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M6.79 5.093A.5.5 0 0 0 6 5.5v5a.5.5 0 0 0 .79.407l3.5-2.5a.5.5 0 0 0 0-.814z"/></svg>} accept="image/*" isFullWidth />
+                    )}
+                    {generationMode === 'animated' && <FileUploader id="animated-input" label="2. ارفع صورة للتحريك (اختياري)" image={animatedInput} setter={setAnimatedInput} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M6.79 5.093A.5.5 0 0 0 6 5.5v5a.5.5 0 0 0 .79.407l3.5-2.5a.5.5 0 0 0 0-.814z"/></svg>} accept="image/*" isFullWidth />}
+                    {generationMode === 'modification' && (
+                        <div className="form-group">
+                            <FileUploader id="modification-image" label="2. ارفع صورة للتعديل" image={modificationImage} setter={setModificationImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/><path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5z"/></svg>} accept="image/*" isFullWidth />
+                            {modificationImage && (
+                                <div className="canvas-editor-container">
+                                    <label>3. حدد المنطقة المراد تعديلها</label>
+                                    <div className="canvas-wrapper">
+                                        <canvas ref={imageCanvasRef} id="image-canvas" />
+                                        <canvas ref={maskCanvasRef} id="mask-canvas" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}/>
+                                    </div>
+                                    <div className="brush-controls">
+                                        <label><span>حجم الفرشاة</span> <span>{brushSize}px</span></label>
+                                        <input type="range" min="5" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value, 10))} disabled={loading} />
+                                        <div className="actions">
+                                            <button onClick={handleClearMask} disabled={loading}>مسح التحديد</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
                     
                     <details open>
@@ -377,12 +450,26 @@ const App = () => {
                             </div>
                             
                             {generationMode === 'static' && (
+                                <>
                                 <div className="form-group">
                                     <label htmlFor="lighting-select">تعديل الإضاءة الاحترافي</label>
                                     <select id="lighting-select" value={lighting} onChange={(e) => setLighting(e.target.value)} disabled={loading}>
                                         {lightingOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                     </select>
                                 </div>
+                                <div className="form-group">
+                                    <label htmlFor="photo-style-select">نمط التصوير</label>
+                                    <select id="photo-style-select" value={photographyStyle} onChange={(e) => setPhotographyStyle(e.target.value)} disabled={loading}>
+                                        {photographyStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="camera-angle-select">زاوية الكاميرا</label>
+                                    <select id="camera-angle-select" value={cameraAngle} onChange={(e) => setCameraAngle(e.target.value)} disabled={loading}>
+                                        {cameraAngleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                    </select>
+                                </div>
+                                </>
                             )}
                             
                             <div className="form-group">
@@ -399,16 +486,18 @@ const App = () => {
                                 </select>
                             </div>
                             
-                            <div className="form-group">
-                                <label>تحديد الحجم (Aspect Ratio)</label>
-                                <div className="aspect-ratio-group">
-                                    {currentAspectRatios.map(ratio => (
-                                        <button key={ratio} className={`aspect-ratio-btn ${aspectRatio === ratio ? 'active' : ''}`} onClick={() => setAspectRatio(ratio)} disabled={loading}>
-                                            {ratio}
-                                        </button>
-                                    ))}
+                            {generationMode !== 'modification' && (
+                                <div className="form-group">
+                                    <label>تحديد الحجم (Aspect Ratio)</label>
+                                    <div className="aspect-ratio-group">
+                                        {currentAspectRatios.map(ratio => (
+                                            <button key={ratio} className={`aspect-ratio-btn ${aspectRatio === ratio ? 'active' : ''}`} onClick={() => setAspectRatio(ratio)} disabled={loading}>
+                                                {ratio}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                             
                             {generationMode === 'static' && (
                                 <div className="toggle-switch">
@@ -421,40 +510,25 @@ const App = () => {
                             )}
                         </div>
                     </details>
-
-                    <button className="generate-btn" onClick={generationMode === 'static' ? handleGenerateStatic : handleGenerateAnimation} disabled={isGenerateDisabled}>
-                        {loading ? '...جاري الإنشاء' : (generationMode === 'static' ? 'إنشاء صورتين' : 'إنشاء فيديو')}
+                    
+                    <button className="generate-btn" onClick={generationMode === 'static' ? handleGenerateStatic : generationMode === 'animated' ? handleGenerateAnimation : handleGenerateModification} disabled={isGenerateDisabled}>
+                        {loading ? '...جاري الإنشاء' : generationMode === 'static' ? 'إنشاء صورتين' : generationMode === 'animated' ? 'إنشاء فيديو' : 'نفّذ التعديل'}
                     </button>
                 </aside>
                 <section className="display-panel">
-                    {loading && (
-                        <div className="loading-overlay">
-                            <div className="spinner"></div>
-                            <p>{loadingMessage}</p>
-                        </div>
-                    )}
-
+                    {loading && ( <div className="loading-overlay"> <div className="spinner"></div> <p>{loadingMessage}</p> </div> )}
                     {!loading && error && <div className="error-message">{error}</div>}
                     
                     {!loading && results.length > 0 && (
                         <div className={`results-grid ${results.length === 1 ? 'single-item' : ''}`}>
                             {results.map((result, index) => (
                                 <div className="result-card" key={index}>
-                                    {upscalingIndex === index && (
-                                        <div className="loading-overlay">
-                                            <div className="spinner upscale-spinner"></div>
-                                            <p>جاري تحسين الجودة...</p>
-                                        </div>
-                                    )}
-                                    {result.type === 'image' ? (
-                                        <img src={result.src} alt={`Generated result ${index + 1}`} className="generated-image" />
-                                    ) : (
-                                        <video src={result.src} autoPlay loop muted playsInline className="generated-video" />
-                                    )}
+                                    {upscalingIndex === index && ( <div className="loading-overlay"> <div className="spinner upscale-spinner"></div> <p>جاري تحسين الجودة...</p> </div> )}
+                                    {result.type === 'image' ? ( <img src={result.src} alt={`Generated result ${index + 1}`} className="generated-image" /> ) : ( <video src={result.src} autoPlay loop muted playsInline className="generated-video" /> )}
                                     <div className="result-card-actions">
                                         {result.type === 'image' && (
                                           <button onClick={() => handleUpscale(result.src, index)} className="action-btn" title="تحسين الجودة" disabled={upscalingIndex !== null}>
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41M12 11.5a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1h-3a.5.5 0 0 0-.5.5m-1.034 2.354-2.646-3.382a.25.25 0 0 1 0-.332l2.646-3.382a.25.25 0 0 1 .41 0l2.646 3.382a.25.25 0 0 1 0 .332l-2.646 3.382a.25.25 0 0 1-.41 0M4.5 2a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m-2 4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5m0 5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5-.5m2-4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5"/></svg>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41M12 11.5a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1h-3a.5.5 0 0 0-.5.5m-1.034 2.354-2.646-3.382a.25.25 0 0 1 0-.332l2.646-3.382a.25.25 0 0 1 .41 0l2.646 3.382a.25.25 0 0 1 0 .332l-2.646 3.382a.25.25 0 0 1-.41 0M4.5 2a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m-2 4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5m0 5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m2-4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5"/></svg>
                                           </button>
                                         )}
                                         <a href={result.src} download={`aboelmakarem-ai-${result.type}-${index + 1}-${Date.now()}.${result.type === 'image' ? 'png' : 'mp4'}`} className="action-btn" title="تنزيل">
