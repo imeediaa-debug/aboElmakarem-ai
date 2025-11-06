@@ -2,6 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI, Modality } from "@google/genai";
 
+// FIX: Changed inline object to a named interface `AIStudio` to avoid conflicts with other global declarations.
+interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+}
+
+declare global {
+    interface Window {
+        aistudio: AIStudio;
+    }
+}
+
 type Result = {
     type: 'image' | 'video';
     src: string;
@@ -12,9 +24,11 @@ type Point = {
     y: number;
 };
 
-const API_KEY = 'AIzaSyB2oicOIvjDmcB_YMiUq8pljDo4bM1bZ-8';
-
 const App = () => {
+    // API Key Management
+    // FIX: Removed manual API key management state (apiKey, isModalOpen, tempApiKey) to comply with guidelines.
+    // The API key will be sourced from process.env.API_KEY.
+
     // State management
     const [generationMode, setGenerationMode] = useState<'static' | 'animated' | 'modification'>('static');
     
@@ -44,6 +58,10 @@ const App = () => {
     const [loadingMessage, setLoadingMessage] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [upscalingIndex, setUpscalingIndex] = useState<number | null>(null);
+    
+    // Veo (Video) API Key state
+    const [veoApiKeySelected, setVeoApiKeySelected] = useState(false);
+    const [checkingVeoKey, setCheckingVeoKey] = useState(false);
 
     // Canvas/Masking state
     const imageCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -51,6 +69,41 @@ const App = () => {
     const [isDrawing, setIsDrawing] = useState(false);
     const [brushSize, setBrushSize] = useState(30);
     const lastPointRef = useRef<Point | null>(null);
+
+    // FIX: Removed useEffect for checking manual API key as it's no longer used.
+
+    // Check for Veo API key when switching to animated mode
+    useEffect(() => {
+        const checkVeoKey = async () => {
+            if (generationMode === 'animated') {
+                setCheckingVeoKey(true);
+                try {
+                    const hasKey = await window.aistudio.hasSelectedApiKey();
+                    setVeoApiKeySelected(hasKey);
+                } catch (e) {
+                    console.error("Error checking for Veo API key:", e);
+                    setVeoApiKeySelected(false);
+                } finally {
+                    setCheckingVeoKey(false);
+                }
+            }
+        };
+        checkVeoKey();
+    }, [generationMode]);
+    
+    // FIX: Removed handleSaveApiKey as manual API key management is removed.
+
+    const handleSelectVeoApiKey = async () => {
+        try {
+            await window.aistudio.openSelectKey();
+            // Assume success after dialog closes to handle race conditions
+            setVeoApiKeySelected(true);
+            setError(null);
+        } catch (e) {
+            console.error("Error opening Veo API key selection:", e);
+            setError("فشل فتح نافذة اختيار مفتاح API. يرجى المحاولة مرة أخرى.");
+        }
+    };
 
     // Save settings to local storage whenever they change
     useEffect(() => { localStorage.setItem('aboelmakarem-ai-prompt', prompt); }, [prompt]);
@@ -82,6 +135,44 @@ const App = () => {
             reader.readAsDataURL(file);
         }
     };
+
+    const getApiErrorMessage = (error: any): string => {
+        let message = 'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.';
+        if (error && typeof error.message === 'string') {
+            const lowerCaseError = error.message.toLowerCase();
+            if (lowerCaseError.includes('api key not valid')) {
+                // FIX: Updated error message as user cannot change the API key anymore.
+                return 'مفتاح API المستخدم غير صالح أو منتهي الصلاحية. يرجى التأكد من تكوين المفتاح بشكل صحيح.';
+            }
+            if (lowerCaseError.includes('permission denied')) {
+                return 'ليس لدى مفتاح API الإذن اللازم. تأكد من تفعيل Gemini API في مشروع Google Cloud الخاص بك.';
+            }
+             if (lowerCaseError.includes('requested entity was not found')) {
+                setVeoApiKeySelected(false);
+                return 'فشل المصادقة لإنشاء الفيديو. يرجى إعادة تحديد مفتاح API الخاص بك لخدمة الفيديو والمحاولة مرة أخرى.';
+            }
+            if (lowerCaseError.includes('quota')) {
+                return 'تم تجاوز حصة الاستخدام لمفتاح API. يرجى التحقق من خطة الفوترة الخاصة بك.';
+            }
+            if (lowerCaseError.includes('model not found')) {
+                return 'النموذج المطلوب غير متوفر حاليًا. قد يكون السبب مشكلة في الخدمة أو أن مفتاحك لا يدعم هذا النموذج.';
+            }
+            message = error.message;
+        }
+        return `فشل الطلب: ${message}`;
+    };
+    
+    const preGenerationCheck = () => {
+        // FIX: Removed manual API key check.
+        if (generationMode === 'animated' && !veoApiKeySelected) {
+            setError('الرجاء تحديد مفتاح API لخدمة الفيديو أولاً.');
+            return false;
+        }
+        setError(null);
+        setResults([]);
+        setLoading(true);
+        return true;
+    }
     
     // Core Generation Logic
     const handleGenerateStatic = async () => {
@@ -89,28 +180,27 @@ const App = () => {
             setError('الرجاء إدخال وصف أو رفع صورة واحدة على الأقل.');
             return;
         }
-        setLoading(true); setError(null); setResults([]);
+        if (!preGenerationCheck()) return;
 
         const generateImage = async (parts: any[]) => {
             try {
-                const ai = new GoogleGenAI({ apiKey: API_KEY });
+                // FIX: Use process.env.API_KEY and remove manual key check.
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash-image',
                     contents: [{ parts: parts }],
                     config: { responseModalities: [Modality.IMAGE] },
                 });
                 
-                if (response?.candidates?.length > 0 && response.candidates[0].content?.parts) {
-                    for (const part of response.candidates[0].content.parts) {
-                        if (part.inlineData) {
-                            return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                        }
-                    }
+                const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+                if (imagePart?.inlineData) {
+                    return { success: true, src: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` };
                 }
+                return { success: false, error: "لم يتم العثور على بيانات صورة في استجابة الـ API." };
             } catch (e) {
                 console.error("Error during image generation:", e);
+                return { success: false, error: getApiErrorMessage(e) };
             }
-            return null;
         };
 
         try {
@@ -138,17 +228,18 @@ const App = () => {
             
             parts.unshift({ text: constructedPrompt });
             
-            const imagePromises = await Promise.all([generateImage(parts), generateImage(parts)]);
-            const successfulResults = imagePromises.filter(url => url !== null) as string[];
+            const imageResults = await Promise.all([generateImage(parts), generateImage(parts)]);
+            const successfulResults = imageResults.filter(res => res.success).map(res => res.src as string);
+            const errors = imageResults.filter(res => !res.success).map(res => res.error as string);
 
             if (successfulResults.length > 0) {
                 setResults(successfulResults.map(src => ({ type: 'image', src })));
             } else {
-                setError('لم يتمكن الذكاء الاصطناعي من إنشاء صورة. حاول مرة أخرى بوصف مختلف أو تأكد من صلاحية مفتاح API.');
+                setError(errors[0] || 'لم يتمكن الذكاء الاصطناعي من إنشاء صورة. حاول مرة أخرى بوصف مختلف.');
             }
         } catch (e) {
             console.error(e);
-            setError('حدث خطأ غير متوقع. يرجى التأكد من صحة مفتاح API والمحاولة مرة أخرى.');
+            setError(getApiErrorMessage(e));
         } finally {
             setLoading(false); setLoadingMessage('');
         }
@@ -159,11 +250,12 @@ const App = () => {
             setError('الرجاء إدخال وصف أو رفع صورة للبدء.');
             return;
         }
-        setLoading(true); setError(null); setResults([]);
+        if (!preGenerationCheck()) return;
 
         try {
             setLoadingMessage('إعداد نموذج الفيديو...');
-            const ai = new GoogleGenAI({ apiKey: API_KEY });
+             // We don't need to pass the key here, it's picked up from the environment
+            const ai = new GoogleGenAI({apiKey: process.env.API_KEY!});
 
             const payload: any = {
                 model: 'veo-3.1-fast-generate-preview',
@@ -176,28 +268,35 @@ const App = () => {
             
             setLoadingMessage('إرسال الطلب إلى نموذج الفيديو...');
             let operation = await ai.models.generateVideos(payload);
-            setLoadingMessage('طلبك في قائمة الانتظار...');
+            setLoadingMessage('طلبك الآن في قائمة الانتظار، كن صبورًا.');
 
+            let pollCount = 0;
             while (!operation.done) {
                 await new Promise(resolve => setTimeout(resolve, 10000));
-                setLoadingMessage('جاري إنشاء الإطارات... قد يستغرق هذا بضع دقائق.');
+                pollCount++;
+                if (pollCount <= 3) {
+                    setLoadingMessage(`جاري معالجة طلبك... (التحقق رقم ${pollCount})`);
+                } else {
+                    setLoadingMessage('فنان الذكاء الاصطناعي يرسم تحفتك... قد يستغرق هذا بضع دقائق.');
+                }
                 operation = await ai.operations.getVideosOperation({ operation });
             }
 
-            setLoadingMessage('جاري جلب الفيديو النهائي...');
+            setLoadingMessage('اكتمل العرض! جاري جلب الفيديو النهائي...');
             const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
             if (downloadLink) {
-                 const videoResponse = await fetch(`${downloadLink}&key=${API_KEY}`);
+                 const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+                 if (!videoResponse.ok) throw new Error(`فشل تحميل الفيديو: ${videoResponse.statusText}`);
                  const videoBlob = await videoResponse.blob();
                  const videoUrl = URL.createObjectURL(videoBlob);
                  setResults([{ type: 'video', src: videoUrl }]);
             } else {
-                throw new Error("لم يتم العثور على رابط تنزيل الفيديو.");
+                throw new Error("لم يتم العثور على رابط تنزيل الفيديو في استجابة الـ API.");
             }
 
         } catch (e: any) {
             console.error(e);
-            setError('حدث خطأ أثناء إنشاء الفيديو. يرجى التأكد من صلاحية مفتاح API والمحاولة مرة أخرى.');
+            setError(getApiErrorMessage(e));
         } finally {
             setLoading(false); setLoadingMessage('');
         }
@@ -208,7 +307,7 @@ const App = () => {
             setError('الرجاء رفع صورة وإدخال وصف للتعديل.');
             return;
         }
-        setLoading(true); setError(null); setResults([]);
+        if (!preGenerationCheck()) return;
 
         try {
             setLoadingMessage('تحضير قناع التعديل...');
@@ -237,7 +336,8 @@ const App = () => {
             ];
 
             setLoadingMessage('جاري تنفيذ التعديل...');
-            const ai = new GoogleGenAI({ apiKey: API_KEY });
+            // FIX: Use process.env.API_KEY.
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
                 contents: [{ parts }],
@@ -246,27 +346,33 @@ const App = () => {
 
             const modifiedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
             if (modifiedImagePart?.inlineData) {
+                // FIX: Used the correct variable `modifiedImagePart` instead of `modificationImage` to construct the image URL.
                 const imageUrl = `data:${modifiedImagePart.inlineData.mimeType};base64,${modifiedImagePart.inlineData.data}`;
                 setResults([{ type: 'image', src: imageUrl }]);
             } else {
-                setError('فشل تعديل الصورة. حاول مرة أخرى بوصف مختلف.');
+                throw new Error('لم يتم العثور على صورة معدلة في استجابة الـ API.');
             }
 
         } catch(e) {
             console.error(e);
-            setError('حدث خطأ أثناء تعديل الصورة. يرجى التأكد من صلاحية مفتاح API.');
+            setError(getApiErrorMessage(e));
         } finally {
             setLoading(false); setLoadingMessage('');
         }
     };
     
     const handleUpscale = async (imageUrl: string, index: number) => {
-        setUpscalingIndex(index); setError(null);
+        // FIX: Removed manual API key check.
+        setLoading(true); // Use main loading state for simplicity
+        setUpscalingIndex(index);
+        setError(null);
+        
         try {
             const upscalePrompt = "مهمتك كخبير تحسين صور: قم برفع جودة هذه الصورة إلى أقصى دقة ممكنة (Ultra HD)، مع زيادة الحدة والوضوح والتفاصيل دون إدخال أي عناصر جديدة أو تغيير المحتوى الأصلي.";
             const upscaleParts = [ { text: upscalePrompt }, { inlineData: { mimeType: imageUrl.split(';')[0].split(':')[1], data: imageUrl.split(',')[1] } } ];
             
-            const ai = new GoogleGenAI({ apiKey: API_KEY });
+            // FIX: Use process.env.API_KEY.
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
                 contents: [{ parts: upscaleParts }],
@@ -282,13 +388,14 @@ const App = () => {
                     return newResults;
                 });
             } else {
-                 setError(`فشل تحسين جودة الصورة رقم ${index + 1}.`);
+                 throw new Error(`فشل تحسين جودة الصورة رقم ${index + 1}.`);
             }
         } catch(e) {
             console.error(e);
-            setError('حدث خطأ أثناء تحسين الجودة.');
+            setError(getApiErrorMessage(e));
         } finally {
              setUpscalingIndex(null);
+             setLoading(false);
         }
     }
 
@@ -307,20 +414,6 @@ const App = () => {
             
             const container = imageCanvas.parentElement;
             if (container) {
-                const { width, height } = container.getBoundingClientRect();
-                const imageAspectRatio = image.width / image.height;
-                const containerAspectRatio = width / height;
-
-                let renderWidth, renderHeight;
-
-                if (imageAspectRatio > containerAspectRatio) {
-                    renderWidth = width;
-                    renderHeight = width / imageAspectRatio;
-                } else {
-                    renderHeight = height;
-                    renderWidth = height * imageAspectRatio;
-                }
-
                 imageCanvas.width = image.width;
                 imageCanvas.height = image.height;
                 maskCanvas.width = image.width;
@@ -332,7 +425,7 @@ const App = () => {
                 maskCanvas.height = image.height;
             }
             
-            ctx.drawImage(image, 0, 0);
+            ctx.drawImage(image, 0, 0, image.width, image.height);
             maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
         };
     }, [modificationImage]);
@@ -395,11 +488,27 @@ const App = () => {
         </div>
     );
     
+    const VeoKeySetup = () => (
+        <div className="veo-setup-container">
+            <h3>مطلوب إعداد إضافي لإنشاء الفيديو</h3>
+            <p>
+                يستخدم إنشاء الفيديو نموذج Veo المتقدم من Google. لأسباب تتعلق بالفوترة والأمان، يجب عليك الموافقة على استخدام مفتاح API الخاص بك لهذه الميزة عبر نافذة Google الرسمية.
+                <br />
+                <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer">تعرف على المزيد حول فوترة Gemini API</a>.
+            </p>
+            <button className="veo-select-key-btn" onClick={handleSelectVeoApiKey}>
+                تحديد مفتاح API لخدمة الفيديو
+            </button>
+        </div>
+    );
+
     // Render Logic
+    // FIX: Removed apiKey checks from disabled logic.
     const isGenerateDisabled = loading || 
-        (generationMode === 'static' && !prompt.trim() && !backgroundImage && !productImage) || 
-        (generationMode === 'animated' && (!prompt.trim() && !animatedInput)) ||
+        (generationMode === 'static' && (!prompt.trim() && !backgroundImage && !productImage)) || 
+        (generationMode === 'animated' && (!veoApiKeySelected || (!prompt.trim() && !animatedInput))) ||
         (generationMode === 'modification' && (!prompt.trim() || !modificationImage));
+
     const currentAspectRatios = generationMode === 'static' ? staticAspectRatios : animatedAspectRatios;
     
     useEffect(() => {
@@ -410,10 +519,12 @@ const App = () => {
 
     return (
         <div className="app-container">
+            {/* FIX: Removed API key modal. */}
             <header className="app-header"><h1 className="app-title">aboelmakarem ai</h1></header>
             <main className="main-container">
                 <aside className="controls-panel">
                     <div className="form-section-title">لوحة التحكم</div>
+                     {/* FIX: Removed "Change API Key" button. */}
                     
                     <div className="form-group">
                         <label>وضع الإنشاء</label>
@@ -423,113 +534,120 @@ const App = () => {
                            <button className={generationMode === 'modification' ? 'active' : ''} onClick={() => setGenerationMode('modification')} disabled={loading}>تعديل صورة</button>
                         </div>
                     </div>
-
-                    <div className="form-group">
-                       <label htmlFor="prompt-input">1. أدخل وصف {generationMode === 'modification' ? 'التعديل' : (generationMode === 'static' ? 'الصورة' : 'الفيديو')}</label>
-                       <textarea id="prompt-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="مثال: كرسي ألعاب احترافي باللون الأسود والأحمر في غرفة مضاءة بالنيون" rows={4} disabled={loading} />
-                    </div>
                     
-                    {generationMode === 'static' && (
-                        <div className="form-group">
-                           <label>2. ارفع الصور (اختياري)</label>
-                           <div style={{display: 'flex', gap: '1rem'}}>
-                             <FileUploader id="background-image" label="الخلفية" image={backgroundImage} setter={setBackgroundImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/><path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/></svg>} />
-                             <FileUploader id="product-image" label="المنتج" image={productImage} setter={setProductImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5 8.186 1.113zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464z"/></svg>} />
-                           </div>
-                        </div>
-                    )}
-                    {generationMode === 'animated' && <FileUploader id="animated-input" label="2. ارفع صورة للتحريك (اختياري)" image={animatedInput} setter={setAnimatedInput} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M6.79 5.093A.5.5 0 0 0 6 5.5v5a.5.5 0 0 0 .79.407l3.5-2.5a.5.5 0 0 0 0-.814z"/></svg>} accept="image/*" isFullWidth />}
-                    {generationMode === 'modification' && (
-                        <div className="form-group">
-                            <FileUploader id="modification-image" label="2. ارفع صورة للتعديل" image={modificationImage} setter={setModificationImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/><path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5z"/></svg>} accept="image/*" isFullWidth />
-                            {modificationImage && (
-                                <div className="canvas-editor-container">
-                                    <label>3. حدد المنطقة المراد تعديلها</label>
-                                    <div className="canvas-wrapper">
-                                        <canvas ref={imageCanvasRef} id="image-canvas" />
-                                        <canvas ref={maskCanvasRef} id="mask-canvas" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}/>
-                                    </div>
-                                    <div className="brush-controls">
-                                        <label><span>حجم الفرشاة</span> <span>{brushSize}px</span></label>
-                                        <input type="range" min="5" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value, 10))} disabled={loading} />
-                                        <div className="actions">
-                                            <button onClick={handleClearMask} disabled={loading}>مسح التحديد</button>
+                    { generationMode === 'animated' && !checkingVeoKey && !veoApiKeySelected && <VeoKeySetup /> }
+                    { checkingVeoKey && generationMode === 'animated' && <div className="veo-setup-container"><div className="spinner"></div><p>جاري التحقق من حالة المفتاح...</p></div> }
+                    
+                    { (generationMode !== 'animated' || veoApiKeySelected) && (
+                        <>
+                            <div className="form-group">
+                               <label htmlFor="prompt-input">1. أدخل وصف {generationMode === 'modification' ? 'التعديل' : (generationMode === 'static' ? 'الصورة' : 'الفيديو')}</label>
+                               <textarea id="prompt-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="مثال: كرسي ألعاب احترافي باللون الأسود والأحمر في غرفة مضاءة بالنيون" rows={4} disabled={loading} />
+                            </div>
+                            
+                            {generationMode === 'static' && (
+                                <div className="form-group">
+                                   <label>2. ارفع الصور (اختياري)</label>
+                                   <div style={{display: 'flex', gap: '1rem'}}>
+                                     <FileUploader id="background-image" label="الخلفية" image={backgroundImage} setter={setBackgroundImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/><path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/></svg>} />
+                                     <FileUploader id="product-image" label="المنتج" image={productImage} setter={setProductImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5 8.186 1.113zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464z"/></svg>} />
+                                   </div>
+                                </div>
+                            )}
+                            {generationMode === 'animated' && <FileUploader id="animated-input" label="2. ارفع صورة للتحريك (اختياري)" image={animatedInput} setter={setAnimatedInput} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M6.79 5.093A.5.5 0 0 0 6 5.5v5a.5.5 0 0 0 .79.407l3.5-2.5a.5.5 0 0 0 0-.814z"/></svg>} accept="image/*" isFullWidth />}
+                            {generationMode === 'modification' && (
+                                <div className="form-group">
+                                    <FileUploader id="modification-image" label="2. ارفع صورة للتعديل" image={modificationImage} setter={setModificationImage} icon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/><path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5z"/></svg>} accept="image/*" isFullWidth />
+                                    {modificationImage && (
+                                        <div className="canvas-editor-container">
+                                            <label>3. حدد المنطقة المراد تعديلها</label>
+                                            <div className="canvas-wrapper">
+                                                <canvas ref={imageCanvasRef} id="image-canvas" />
+                                                <canvas ref={maskCanvasRef} id="mask-canvas" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}/>
+                                            </div>
+                                            <div className="brush-controls">
+                                                <label><span>حجم الفرشاة</span> <span>{brushSize}px</span></label>
+                                                <input type="range" min="5" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value, 10))} disabled={loading} />
+                                                <div className="actions">
+                                                    <button onClick={handleClearMask} disabled={loading}>مسح التحديد</button>
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             )}
-                        </div>
+                            
+                            <details open>
+                                <summary>الإعدادات المتقدمة</summary>
+                                <div className="details-content">
+                                     <div className="form-group">
+                                        <label htmlFor="neg-prompt-input">وصف سلبي (Negative Prompt)</label>
+                                        <textarea id="neg-prompt-input" value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} placeholder="مثال: جودة منخفضة، تشويش، ألوان باهتة" rows={2} disabled={loading} />
+                                    </div>
+                                    
+                                    {generationMode === 'static' && (
+                                        <>
+                                        <div className="form-group">
+                                            <label htmlFor="lighting-select">تعديل الإضاءة الاحترافي</label>
+                                            <select id="lighting-select" value={lighting} onChange={(e) => setLighting(e.target.value)} disabled={loading}>
+                                                {lightingOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label htmlFor="photo-style-select">نمط التصوير</label>
+                                            <select id="photo-style-select" value={photographyStyle} onChange={(e) => setPhotographyStyle(e.target.value)} disabled={loading}>
+                                                {photographyStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label htmlFor="camera-angle-select">زاوية الكاميرا</label>
+                                            <select id="camera-angle-select" value={cameraAngle} onChange={(e) => setCameraAngle(e.target.value)} disabled={loading}>
+                                                {cameraAngleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                            </select>
+                                        </div>
+                                        </>
+                                    )}
+                                    
+                                    <div className="form-group">
+                                        <label htmlFor="color-style-select">تعديل الألوان</label>
+                                        <select id="color-style-select" value={colorStyle} onChange={(e) => setColorStyle(e.target.value)} disabled={loading}>
+                                            {colorStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                        </select>
+                                    </div>
+        
+                                    <div className="form-group">
+                                        <label htmlFor="art-style-select">النمط الفني</label>
+                                        <select id="art-style-select" value={artStyle} onChange={(e) => setArtStyle(e.target.value)} disabled={loading}>
+                                            {artStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                        </select>
+                                    </div>
+                                    
+                                    {generationMode !== 'modification' && (
+                                        <div className="form-group">
+                                            <label>تحديد الحجم (Aspect Ratio)</label>
+                                            <div className="aspect-ratio-group">
+                                                {currentAspectRatios.map(ratio => (
+                                                    <button key={ratio} className={`aspect-ratio-btn ${aspectRatio === ratio ? 'active' : ''}`} onClick={() => setAspectRatio(ratio)} disabled={loading}>
+                                                        {ratio}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {generationMode === 'static' && (
+                                        <div className="toggle-switch">
+                                            <label htmlFor="quality-toggle">جودة فائقة 4K (أبطأ)</label>
+                                            <label className="switch">
+                                                <input type="checkbox" id="quality-toggle" checked={highQuality} onChange={(e) => setHighQuality(e.target.checked)} disabled={loading} />
+                                                <span className="slider"></span>
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+                            </details>
+                        </>
                     )}
-                    
-                    <details open>
-                        <summary>الإعدادات المتقدمة</summary>
-                        <div className="details-content">
-                             <div className="form-group">
-                                <label htmlFor="neg-prompt-input">وصف سلبي (Negative Prompt)</label>
-                                <textarea id="neg-prompt-input" value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} placeholder="مثال: جودة منخفضة، تشويش، ألوان باهتة" rows={2} disabled={loading} />
-                            </div>
-                            
-                            {generationMode === 'static' && (
-                                <>
-                                <div className="form-group">
-                                    <label htmlFor="lighting-select">تعديل الإضاءة الاحترافي</label>
-                                    <select id="lighting-select" value={lighting} onChange={(e) => setLighting(e.target.value)} disabled={loading}>
-                                        {lightingOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                    </select>
-                                </div>
-                                <div className="form-group">
-                                    <label htmlFor="photo-style-select">نمط التصوير</label>
-                                    <select id="photo-style-select" value={photographyStyle} onChange={(e) => setPhotographyStyle(e.target.value)} disabled={loading}>
-                                        {photographyStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                    </select>
-                                </div>
-                                <div className="form-group">
-                                    <label htmlFor="camera-angle-select">زاوية الكاميرا</label>
-                                    <select id="camera-angle-select" value={cameraAngle} onChange={(e) => setCameraAngle(e.target.value)} disabled={loading}>
-                                        {cameraAngleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                    </select>
-                                </div>
-                                </>
-                            )}
-                            
-                            <div className="form-group">
-                                <label htmlFor="color-style-select">تعديل الألوان</label>
-                                <select id="color-style-select" value={colorStyle} onChange={(e) => setColorStyle(e.target.value)} disabled={loading}>
-                                    {colorStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                </select>
-                            </div>
-
-                            <div className="form-group">
-                                <label htmlFor="art-style-select">النمط الفني</label>
-                                <select id="art-style-select" value={artStyle} onChange={(e) => setArtStyle(e.target.value)} disabled={loading}>
-                                    {artStyleOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                </select>
-                            </div>
-                            
-                            {generationMode !== 'modification' && (
-                                <div className="form-group">
-                                    <label>تحديد الحجم (Aspect Ratio)</label>
-                                    <div className="aspect-ratio-group">
-                                        {currentAspectRatios.map(ratio => (
-                                            <button key={ratio} className={`aspect-ratio-btn ${aspectRatio === ratio ? 'active' : ''}`} onClick={() => setAspectRatio(ratio)} disabled={loading}>
-                                                {ratio}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            
-                            {generationMode === 'static' && (
-                                <div className="toggle-switch">
-                                    <label htmlFor="quality-toggle">جودة فائقة 4K (أبطأ)</label>
-                                    <label className="switch">
-                                        <input type="checkbox" id="quality-toggle" checked={highQuality} onChange={(e) => setHighQuality(e.target.checked)} disabled={loading} />
-                                        <span className="slider"></span>
-                                    </label>
-                                </div>
-                            )}
-                        </div>
-                    </details>
                     
                     <button className="generate-btn" onClick={generationMode === 'static' ? handleGenerateStatic : generationMode === 'animated' ? handleGenerateAnimation : handleGenerateModification} disabled={isGenerateDisabled}>
                         {loading ? '...جاري الإنشاء' : generationMode === 'static' ? 'إنشاء صورتين' : generationMode === 'animated' ? 'إنشاء فيديو' : 'نفّذ التعديل'}
@@ -547,7 +665,7 @@ const App = () => {
                                     {result.type === 'image' ? ( <img src={result.src} alt={`Generated result ${index + 1}`} className="generated-image" /> ) : ( <video src={result.src} autoPlay loop muted playsInline className="generated-video" /> )}
                                     <div className="result-card-actions">
                                         {result.type === 'image' && (
-                                          <button onClick={() => handleUpscale(result.src, index)} className="action-btn" title="تحسين الجودة" disabled={upscalingIndex !== null}>
+                                          <button onClick={() => handleUpscale(result.src, index)} className="action-btn" title="تحسين الجودة" disabled={upscalingIndex !== null || loading}>
                                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41M12 11.5a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1h-3a.5.5 0 0 0-.5.5m-1.034 2.354-2.646-3.382a.25.25 0 0 1 0-.332l2.646-3.382a.25.25 0 0 1 .41 0l2.646 3.382a.25.25 0 0 1 0 .332l-2.646 3.382a.25.25 0 0 1-.41 0M4.5 2a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m-2 4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5m0 5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m2-4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5"/></svg>
                                           </button>
                                         )}

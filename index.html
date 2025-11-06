@@ -721,6 +721,49 @@
             color: var(--error-color);
             background-color: var(--error-surface-color);
         }
+        
+        /* Veo Key Setup Styles */
+        .veo-setup-container {
+            border: 1px solid var(--subtle-border-color);
+            background-color: var(--background-color);
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .veo-setup-container h3 {
+            font-size: 1.1rem;
+            color: var(--on-background-color);
+        }
+        .veo-setup-container p {
+            color: var(--on-surface-color);
+            font-size: 0.9rem;
+        }
+        .veo-setup-container a {
+             color: var(--primary-color);
+             text-decoration: none;
+        }
+        .veo-setup-container a:hover {
+            text-decoration: underline;
+        }
+        .veo-select-key-btn {
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: none;
+            background: var(--primary-color);
+            color: #0d1117;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.2s;
+        }
+        .veo-select-key-btn:hover {
+             background-color: var(--primary-hover-color);
+             transform: translateY(-2px);
+        }
 
 
         @media (max-width: 1200px) {
