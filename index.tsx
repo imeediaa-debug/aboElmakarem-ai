@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI, Modality } from "@google/genai";
 
-// FIX: Changed inline object to a named interface `AIStudio` to avoid conflicts with other global declarations.
-interface AIStudio {
-    hasSelectedApiKey: () => Promise<boolean>;
-    openSelectKey: () => Promise<void>;
-}
-
+// FIX: Moved AIStudio interface into declare global to resolve declaration conflicts.
 declare global {
+    interface AIStudio {
+        hasSelectedApiKey: () => Promise<boolean>;
+        openSelectKey: () => Promise<void>;
+    }
+
     interface Window {
         aistudio: AIStudio;
     }
@@ -26,8 +26,8 @@ type Point = {
 
 const App = () => {
     // API Key Management
-    // FIX: Removed manual API key management state (apiKey, isModalOpen, tempApiKey) to comply with guidelines.
-    // The API key will be sourced from process.env.API_KEY.
+    const [isApiKeyReady, setIsApiKeyReady] = useState(false);
+    const [isCheckingApiKey, setIsCheckingApiKey] = useState(true);
 
     // State management
     const [generationMode, setGenerationMode] = useState<'static' | 'animated' | 'modification'>('static');
@@ -59,10 +59,6 @@ const App = () => {
     const [error, setError] = useState<string | null>(null);
     const [upscalingIndex, setUpscalingIndex] = useState<number | null>(null);
     
-    // Veo (Video) API Key state
-    const [veoApiKeySelected, setVeoApiKeySelected] = useState(false);
-    const [checkingVeoKey, setCheckingVeoKey] = useState(false);
-
     // Canvas/Masking state
     const imageCanvasRef = useRef<HTMLCanvasElement>(null);
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -70,38 +66,32 @@ const App = () => {
     const [brushSize, setBrushSize] = useState(30);
     const lastPointRef = useRef<Point | null>(null);
 
-    // FIX: Removed useEffect for checking manual API key as it's no longer used.
-
-    // Check for Veo API key when switching to animated mode
+    // Check for a selected API key on application startup
     useEffect(() => {
-        const checkVeoKey = async () => {
-            if (generationMode === 'animated') {
-                setCheckingVeoKey(true);
-                try {
-                    const hasKey = await window.aistudio.hasSelectedApiKey();
-                    setVeoApiKeySelected(hasKey);
-                } catch (e) {
-                    console.error("Error checking for Veo API key:", e);
-                    setVeoApiKeySelected(false);
-                } finally {
-                    setCheckingVeoKey(false);
-                }
+        const checkApiKey = async () => {
+            setIsCheckingApiKey(true);
+            try {
+                const hasKey = await window.aistudio.hasSelectedApiKey();
+                setIsApiKeyReady(hasKey);
+            } catch (e) {
+                console.error("Error checking for API key:", e);
+                setIsApiKeyReady(false);
+            } finally {
+                setIsCheckingApiKey(false);
             }
         };
-        checkVeoKey();
-    }, [generationMode]);
+        checkApiKey();
+    }, []);
     
-    // FIX: Removed handleSaveApiKey as manual API key management is removed.
-
-    const handleSelectVeoApiKey = async () => {
+    const handleSelectApiKey = async () => {
         try {
             await window.aistudio.openSelectKey();
             // Assume success after dialog closes to handle race conditions
-            setVeoApiKeySelected(true);
+            setIsApiKeyReady(true);
             setError(null);
         } catch (e) {
-            console.error("Error opening Veo API key selection:", e);
-            setError("فشل فتح نافذة اختيار مفتاح API. يرجى المحاولة مرة أخرى.");
+            console.error("Error opening API key selection:", e);
+            setError("فشل فتح نافذة اختيار مفتاح API. يرجى تحديث الصفحة والمحاولة مرة أخرى.");
         }
     };
 
@@ -141,15 +131,14 @@ const App = () => {
         if (error && typeof error.message === 'string') {
             const lowerCaseError = error.message.toLowerCase();
             if (lowerCaseError.includes('api key not valid')) {
-                // FIX: Updated error message as user cannot change the API key anymore.
                 return 'مفتاح API المستخدم غير صالح أو منتهي الصلاحية. يرجى التأكد من تكوين المفتاح بشكل صحيح.';
             }
             if (lowerCaseError.includes('permission denied')) {
                 return 'ليس لدى مفتاح API الإذن اللازم. تأكد من تفعيل Gemini API في مشروع Google Cloud الخاص بك.';
             }
              if (lowerCaseError.includes('requested entity was not found')) {
-                setVeoApiKeySelected(false);
-                return 'فشل المصادقة لإنشاء الفيديو. يرجى إعادة تحديد مفتاح API الخاص بك لخدمة الفيديو والمحاولة مرة أخرى.';
+                setIsApiKeyReady(false); // Trigger re-authentication
+                return 'فشل المصادقة. يرجى إعادة تحديد مفتاح API صالح والمحاولة مرة أخرى.';
             }
             if (lowerCaseError.includes('quota')) {
                 return 'تم تجاوز حصة الاستخدام لمفتاح API. يرجى التحقق من خطة الفوترة الخاصة بك.';
@@ -163,9 +152,8 @@ const App = () => {
     };
     
     const preGenerationCheck = () => {
-        // FIX: Removed manual API key check.
-        if (generationMode === 'animated' && !veoApiKeySelected) {
-            setError('الرجاء تحديد مفتاح API لخدمة الفيديو أولاً.');
+        if (!isApiKeyReady) {
+            setError('الرجاء تحديد مفتاح API أولاً.');
             return false;
         }
         setError(null);
@@ -184,11 +172,11 @@ const App = () => {
 
         const generateImage = async (parts: any[]) => {
             try {
-                // FIX: Use process.env.API_KEY and remove manual key check.
                 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+                // FIX: The 'contents' property should be a single Content object, not an array for this use case.
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash-image',
-                    contents: [{ parts: parts }],
+                    contents: { parts: parts },
                     config: { responseModalities: [Modality.IMAGE] },
                 });
                 
@@ -254,7 +242,6 @@ const App = () => {
 
         try {
             setLoadingMessage('إعداد نموذج الفيديو...');
-             // We don't need to pass the key here, it's picked up from the environment
             const ai = new GoogleGenAI({apiKey: process.env.API_KEY!});
 
             const payload: any = {
@@ -336,17 +323,16 @@ const App = () => {
             ];
 
             setLoadingMessage('جاري تنفيذ التعديل...');
-            // FIX: Use process.env.API_KEY.
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            // FIX: The 'contents' property should be a single Content object, not an array for this use case. Also, expanded object shorthand for clarity.
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
-                contents: [{ parts }],
+                contents: { parts: parts },
                 config: { responseModalities: [Modality.IMAGE] },
             });
 
             const modifiedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
             if (modifiedImagePart?.inlineData) {
-                // FIX: Used the correct variable `modifiedImagePart` instead of `modificationImage` to construct the image URL.
                 const imageUrl = `data:${modifiedImagePart.inlineData.mimeType};base64,${modifiedImagePart.inlineData.data}`;
                 setResults([{ type: 'image', src: imageUrl }]);
             } else {
@@ -362,8 +348,7 @@ const App = () => {
     };
     
     const handleUpscale = async (imageUrl: string, index: number) => {
-        // FIX: Removed manual API key check.
-        setLoading(true); // Use main loading state for simplicity
+        setLoading(true);
         setUpscalingIndex(index);
         setError(null);
         
@@ -371,11 +356,11 @@ const App = () => {
             const upscalePrompt = "مهمتك كخبير تحسين صور: قم برفع جودة هذه الصورة إلى أقصى دقة ممكنة (Ultra HD)، مع زيادة الحدة والوضوح والتفاصيل دون إدخال أي عناصر جديدة أو تغيير المحتوى الأصلي.";
             const upscaleParts = [ { text: upscalePrompt }, { inlineData: { mimeType: imageUrl.split(';')[0].split(':')[1], data: imageUrl.split(',')[1] } } ];
             
-            // FIX: Use process.env.API_KEY.
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            // FIX: The 'contents' property should be a single Content object, not an array for this use case.
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
-                contents: [{ parts: upscaleParts }],
+                contents: { parts: upscaleParts },
                 config: { responseModalities: [Modality.IMAGE] },
             });
             const upscaledImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
@@ -488,25 +473,31 @@ const App = () => {
         </div>
     );
     
-    const VeoKeySetup = () => (
-        <div className="veo-setup-container">
-            <h3>مطلوب إعداد إضافي لإنشاء الفيديو</h3>
-            <p>
-                يستخدم إنشاء الفيديو نموذج Veo المتقدم من Google. لأسباب تتعلق بالفوترة والأمان، يجب عليك الموافقة على استخدام مفتاح API الخاص بك لهذه الميزة عبر نافذة Google الرسمية.
-                <br />
-                <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer">تعرف على المزيد حول فوترة Gemini API</a>.
-            </p>
-            <button className="veo-select-key-btn" onClick={handleSelectVeoApiKey}>
-                تحديد مفتاح API لخدمة الفيديو
-            </button>
+    const ApiKeySelectionModal = ({ onSelectKey }: { onSelectKey: () => void }) => (
+        <div className="api-key-modal-overlay">
+            <div className="api-key-modal">
+                <h2>مطلوب مفتاح API</h2>
+                <p>
+                    لاستخدام جميع ميزات هذا التطبيق، بما في ذلك إنشاء الصور والفيديو، يجب عليك أولاً تحديد مفتاح Google AI API. سيتم استخدام هذا المفتاح لجميع الطلبات.
+                    <br />
+                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer">تعرف على المزيد حول فوترة Gemini API</a>.
+                </p>
+                <button onClick={onSelectKey}>تحديد مفتاح API</button>
+            </div>
+        </div>
+    );
+
+    const InitializingSpinner = () => (
+        <div className="loading-overlay" style={{ position: 'fixed', backdropFilter: 'blur(10px)', zIndex: 101 }}>
+            <div className="spinner"></div>
+            <p>جاري التحقق من حالة مفتاح API...</p>
         </div>
     );
 
     // Render Logic
-    // FIX: Removed apiKey checks from disabled logic.
-    const isGenerateDisabled = loading || 
+    const isGenerateDisabled = loading || !isApiKeyReady ||
         (generationMode === 'static' && (!prompt.trim() && !backgroundImage && !productImage)) || 
-        (generationMode === 'animated' && (!veoApiKeySelected || (!prompt.trim() && !animatedInput))) ||
+        (generationMode === 'animated' && (!prompt.trim() && !animatedInput)) ||
         (generationMode === 'modification' && (!prompt.trim() || !modificationImage));
 
     const currentAspectRatios = generationMode === 'static' ? staticAspectRatios : animatedAspectRatios;
@@ -519,26 +510,25 @@ const App = () => {
 
     return (
         <div className="app-container">
-            {/* FIX: Removed API key modal. */}
             <header className="app-header"><h1 className="app-title">aboelmakarem ai</h1></header>
-            <main className="main-container">
-                <aside className="controls-panel">
-                    <div className="form-section-title">لوحة التحكم</div>
-                     {/* FIX: Removed "Change API Key" button. */}
-                    
-                    <div className="form-group">
-                        <label>وضع الإنشاء</label>
-                        <div className="mode-selector">
-                           <button className={generationMode === 'static' ? 'active' : ''} onClick={() => setGenerationMode('static')} disabled={loading}>صورة ثابتة</button>
-                           <button className={generationMode === 'animated' ? 'active' : ''} onClick={() => setGenerationMode('animated')} disabled={loading}>فيديو</button>
-                           <button className={generationMode === 'modification' ? 'active' : ''} onClick={() => setGenerationMode('modification')} disabled={loading}>تعديل صورة</button>
+            
+            {isCheckingApiKey && <InitializingSpinner />}
+            {!isCheckingApiKey && !isApiKeyReady && <ApiKeySelectionModal onSelectKey={handleSelectApiKey} />}
+
+            {isApiKeyReady && (
+                <main className="main-container">
+                    <aside className="controls-panel">
+                        <div className="form-section-title">لوحة التحكم</div>
+                        
+                        <div className="form-group">
+                            <label>وضع الإنشاء</label>
+                            <div className="mode-selector">
+                               <button className={generationMode === 'static' ? 'active' : ''} onClick={() => setGenerationMode('static')} disabled={loading}>صورة ثابتة</button>
+                               <button className={generationMode === 'animated' ? 'active' : ''} onClick={() => setGenerationMode('animated')} disabled={loading}>فيديو</button>
+                               <button className={generationMode === 'modification' ? 'active' : ''} onClick={() => setGenerationMode('modification')} disabled={loading}>تعديل صورة</button>
+                            </div>
                         </div>
-                    </div>
-                    
-                    { generationMode === 'animated' && !checkingVeoKey && !veoApiKeySelected && <VeoKeySetup /> }
-                    { checkingVeoKey && generationMode === 'animated' && <div className="veo-setup-container"><div className="spinner"></div><p>جاري التحقق من حالة المفتاح...</p></div> }
-                    
-                    { (generationMode !== 'animated' || veoApiKeySelected) && (
+                        
                         <>
                             <div className="form-group">
                                <label htmlFor="prompt-input">1. أدخل وصف {generationMode === 'modification' ? 'التعديل' : (generationMode === 'static' ? 'الصورة' : 'الفيديو')}</label>
@@ -647,48 +637,48 @@ const App = () => {
                                 </div>
                             </details>
                         </>
-                    )}
-                    
-                    <button className="generate-btn" onClick={generationMode === 'static' ? handleGenerateStatic : generationMode === 'animated' ? handleGenerateAnimation : handleGenerateModification} disabled={isGenerateDisabled}>
-                        {loading ? '...جاري الإنشاء' : generationMode === 'static' ? 'إنشاء صورتين' : generationMode === 'animated' ? 'إنشاء فيديو' : 'نفّذ التعديل'}
-                    </button>
-                </aside>
-                <section className="display-panel">
-                    {loading && ( <div className="loading-overlay"> <div className="spinner"></div> <p>{loadingMessage}</p> </div> )}
-                    {!loading && error && <div className="error-message">{error}</div>}
-                    
-                    {!loading && results.length > 0 && (
-                        <div className={`results-grid ${results.length === 1 ? 'single-item' : ''}`}>
-                            {results.map((result, index) => (
-                                <div className="result-card" key={index}>
-                                    {upscalingIndex === index && ( <div className="loading-overlay"> <div className="spinner upscale-spinner"></div> <p>جاري تحسين الجودة...</p> </div> )}
-                                    {result.type === 'image' ? ( <img src={result.src} alt={`Generated result ${index + 1}`} className="generated-image" /> ) : ( <video src={result.src} autoPlay loop muted playsInline className="generated-video" /> )}
-                                    <div className="result-card-actions">
-                                        {result.type === 'image' && (
-                                          <button onClick={() => handleUpscale(result.src, index)} className="action-btn" title="تحسين الجودة" disabled={upscalingIndex !== null || loading}>
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41M12 11.5a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1h-3a.5.5 0 0 0-.5.5m-1.034 2.354-2.646-3.382a.25.25 0 0 1 0-.332l2.646-3.382a.25.25 0 0 1 .41 0l2.646 3.382a.25.25 0 0 1 0 .332l-2.646 3.382a.25.25 0 0 1-.41 0M4.5 2a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m-2 4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5m0 5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m2-4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5"/></svg>
-                                          </button>
-                                        )}
-                                        <a href={result.src} download={`aboelmakarem-ai-${result.type}-${index + 1}-${Date.now()}.${result.type === 'image' ? 'png' : 'mp4'}`} className="action-btn" title="تنزيل">
-                                           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>
-                                        </a>
+                        
+                        <button className="generate-btn" onClick={generationMode === 'static' ? handleGenerateStatic : generationMode === 'animated' ? handleGenerateAnimation : handleGenerateModification} disabled={isGenerateDisabled}>
+                            {loading ? '...جاري الإنشاء' : generationMode === 'static' ? 'إنشاء صورتين' : generationMode === 'animated' ? 'إنشاء فيديو' : 'نفّذ التعديل'}
+                        </button>
+                    </aside>
+                    <section className="display-panel">
+                        {loading && ( <div className="loading-overlay"> <div className="spinner"></div> <p>{loadingMessage}</p> </div> )}
+                        {!loading && error && <div className="error-message">{error}</div>}
+                        
+                        {!loading && results.length > 0 && (
+                            <div className={`results-grid ${results.length === 1 ? 'single-item' : ''}`}>
+                                {results.map((result, index) => (
+                                    <div className="result-card" key={index}>
+                                        {upscalingIndex === index && ( <div className="loading-overlay"> <div className="spinner upscale-spinner"></div> <p>جاري تحسين الجودة...</p> </div> )}
+                                        {result.type === 'image' ? ( <img src={result.src} alt={`Generated result ${index + 1}`} className="generated-image" /> ) : ( <video src={result.src} autoPlay loop muted playsInline className="generated-video" /> )}
+                                        <div className="result-card-actions">
+                                            {result.type === 'image' && (
+                                              <button onClick={() => handleUpscale(result.src, index)} className="action-btn" title="تحسين الجودة" disabled={upscalingIndex !== null || loading}>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41M12 11.5a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1h-3a.5.5 0 0 0-.5.5m-1.034 2.354-2.646-3.382a.25.25 0 0 1 0-.332l2.646-3.382a.25.25 0 0 1 .41 0l2.646 3.382a.25.25 0 0 1 0 .332l-2.646 3.382a.25.25 0 0 1-.41 0M4.5 2a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m-2 4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5m0 5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5.5m2-4a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5"/></svg>
+                                              </button>
+                                            )}
+                                            <a href={result.src} download={`aboelmakarem-ai-${result.type}-${index + 1}-${Date.now()}.${result.type === 'image' ? 'png' : 'mp4'}`} className="action-btn" title="تنزيل">
+                                               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>
+                                            </a>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                ))}
+                            </div>
+                        )}
 
-                    {!loading && !error && results.length === 0 && (
-                         <div className="placeholder">
-                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-                             </svg>
-                            <h2>ستظهر إبداعاتك هنا</h2>
-                            <p>املأ الحقول في لوحة التحكم لبدء عملية الإبداع.</p>
-                        </div>
-                    )}
-                </section>
-            </main>
+                        {!loading && !error && results.length === 0 && (
+                             <div className="placeholder">
+                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                                 </svg>
+                                <h2>ستظهر إبداعاتك هنا</h2>
+                                <p>املأ الحقول في لوحة التحكم لبدء عملية الإبداع.</p>
+                            </div>
+                        )}
+                    </section>
+                </main>
+            )}
         </div>
     );
 };

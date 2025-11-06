@@ -668,18 +668,6 @@
             text-decoration: underline;
         }
 
-        .api-key-modal input {
-            width: 100%;
-            padding: 0.75rem;
-            border-radius: 8px;
-            border: 1px solid var(--subtle-border-color);
-            background-color: var(--background-color);
-            color: var(--on-background-color);
-            font-family: inherit;
-            font-size: 1rem;
-            text-align: center;
-        }
-
         .api-key-modal button {
             width: 100%;
             padding: 0.75rem;
@@ -690,81 +678,13 @@
             font-size: 1rem;
             font-weight: bold;
             cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .api-key-modal button:disabled {
-            background-color: #30363d;
-            color: #7d8590;
-            cursor: not-allowed;
-        }
-
-        .api-key-modal button:not(:disabled):hover {
-            background-color: var(--primary-hover-color);
-        }
-
-        .change-api-key-btn {
-            width: 100%;
-            padding: 0.5rem;
-            border-radius: 8px;
-            border: 1px solid var(--subtle-border-color);
-            background-color: transparent;
-            color: var(--on-surface-color);
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-bottom: -0.5rem; /* to space it from the next element */
-            font-family: inherit;
-            font-weight: 500;
-        }
-        .change-api-key-btn:hover {
-            border-color: var(--error-color);
-            color: var(--error-color);
-            background-color: var(--error-surface-color);
-        }
-        
-        /* Veo Key Setup Styles */
-        .veo-setup-container {
-            border: 1px solid var(--subtle-border-color);
-            background-color: var(--background-color);
-            border-radius: var(--border-radius);
-            padding: 1.5rem;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-        .veo-setup-container h3 {
-            font-size: 1.1rem;
-            color: var(--on-background-color);
-        }
-        .veo-setup-container p {
-            color: var(--on-surface-color);
-            font-size: 0.9rem;
-        }
-        .veo-setup-container a {
-             color: var(--primary-color);
-             text-decoration: none;
-        }
-        .veo-setup-container a:hover {
-            text-decoration: underline;
-        }
-        .veo-select-key-btn {
-            padding: 0.75rem;
-            border-radius: 8px;
-            border: none;
-            background: var(--primary-color);
-            color: #0d1117;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
             transition: background-color 0.2s, transform 0.2s;
         }
-        .veo-select-key-btn:hover {
+        
+        .api-key-modal button:hover {
              background-color: var(--primary-hover-color);
              transform: translateY(-2px);
         }
-
 
         @media (max-width: 1200px) {
             .main-container {
