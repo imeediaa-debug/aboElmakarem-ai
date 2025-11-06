@@ -12,6 +12,8 @@ type Point = {
     y: number;
 };
 
+const API_KEY = 'AIzaSyB2oicOIvjDmcB_YMiUq8pljDo4bM1bZ-8';
+
 const App = () => {
     // State management
     const [generationMode, setGenerationMode] = useState<'static' | 'animated' | 'modification'>('static');
@@ -91,7 +93,7 @@ const App = () => {
 
         const generateImage = async (parts: any[]) => {
             try {
-                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+                const ai = new GoogleGenAI({ apiKey: API_KEY });
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash-image',
                     contents: [{ parts: parts }],
@@ -142,7 +144,7 @@ const App = () => {
             if (successfulResults.length > 0) {
                 setResults(successfulResults.map(src => ({ type: 'image', src })));
             } else {
-                setError('لم يتمكن الذكاء الاصطناعي من إنشاء صورة. حاول مرة أخرى بوصف مختلف.');
+                setError('لم يتمكن الذكاء الاصطناعي من إنشاء صورة. حاول مرة أخرى بوصف مختلف أو تأكد من صلاحية مفتاح API.');
             }
         } catch (e) {
             console.error(e);
@@ -161,7 +163,7 @@ const App = () => {
 
         try {
             setLoadingMessage('إعداد نموذج الفيديو...');
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            const ai = new GoogleGenAI({ apiKey: API_KEY });
 
             const payload: any = {
                 model: 'veo-3.1-fast-generate-preview',
@@ -185,7 +187,7 @@ const App = () => {
             setLoadingMessage('جاري جلب الفيديو النهائي...');
             const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
             if (downloadLink) {
-                 const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+                 const videoResponse = await fetch(`${downloadLink}&key=${API_KEY}`);
                  const videoBlob = await videoResponse.blob();
                  const videoUrl = URL.createObjectURL(videoBlob);
                  setResults([{ type: 'video', src: videoUrl }]);
@@ -210,7 +212,6 @@ const App = () => {
 
         try {
             setLoadingMessage('تحضير قناع التعديل...');
-            // Create a mask image from the mask canvas
             const maskCanvas = maskCanvasRef.current;
             if (!maskCanvas) throw new Error("Mask canvas not found.");
 
@@ -220,10 +221,8 @@ const App = () => {
             const tempCtx = tempCanvas.getContext('2d');
             if (!tempCtx) throw new Error("Could not get context for temp canvas.");
 
-            // Create a black background
             tempCtx.fillStyle = 'black';
             tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-            // Draw the user's strokes in white
             tempCtx.globalCompositeOperation = 'source-over';
             tempCtx.drawImage(maskCanvas, 0, 0);
 
@@ -238,7 +237,7 @@ const App = () => {
             ];
 
             setLoadingMessage('جاري تنفيذ التعديل...');
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            const ai = new GoogleGenAI({ apiKey: API_KEY });
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
                 contents: [{ parts }],
@@ -267,7 +266,7 @@ const App = () => {
             const upscalePrompt = "مهمتك كخبير تحسين صور: قم برفع جودة هذه الصورة إلى أقصى دقة ممكنة (Ultra HD)، مع زيادة الحدة والوضوح والتفاصيل دون إدخال أي عناصر جديدة أو تغيير المحتوى الأصلي.";
             const upscaleParts = [ { text: upscalePrompt }, { inlineData: { mimeType: imageUrl.split(';')[0].split(':')[1], data: imageUrl.split(',')[1] } } ];
             
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            const ai = new GoogleGenAI({ apiKey: API_KEY });
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash-image',
                 contents: [{ parts: upscaleParts }],
@@ -306,10 +305,32 @@ const App = () => {
             const maskCtx = maskCanvas.getContext('2d');
             if (!ctx || !maskCtx) return;
             
-            imageCanvas.width = image.width;
-            imageCanvas.height = image.height;
-            maskCanvas.width = image.width;
-            maskCanvas.height = image.height;
+            const container = imageCanvas.parentElement;
+            if (container) {
+                const { width, height } = container.getBoundingClientRect();
+                const imageAspectRatio = image.width / image.height;
+                const containerAspectRatio = width / height;
+
+                let renderWidth, renderHeight;
+
+                if (imageAspectRatio > containerAspectRatio) {
+                    renderWidth = width;
+                    renderHeight = width / imageAspectRatio;
+                } else {
+                    renderHeight = height;
+                    renderWidth = height * imageAspectRatio;
+                }
+
+                imageCanvas.width = image.width;
+                imageCanvas.height = image.height;
+                maskCanvas.width = image.width;
+                maskCanvas.height = image.height;
+            } else {
+                imageCanvas.width = image.width;
+                imageCanvas.height = image.height;
+                maskCanvas.width = image.width;
+                maskCanvas.height = image.height;
+            }
             
             ctx.drawImage(image, 0, 0);
             maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
@@ -382,11 +403,10 @@ const App = () => {
     const currentAspectRatios = generationMode === 'static' ? staticAspectRatios : animatedAspectRatios;
     
     useEffect(() => {
-        if (generationMode !== 'modification' && !currentAspectRatios.includes(aspectRatio)) {
+        if (generationMode !== 'static' && !currentAspectRatios.includes(aspectRatio)) {
             setAspectRatio(currentAspectRatios[0]);
         }
     }, [generationMode, aspectRatio, currentAspectRatios]);
-
 
     return (
         <div className="app-container">
@@ -394,7 +414,7 @@ const App = () => {
             <main className="main-container">
                 <aside className="controls-panel">
                     <div className="form-section-title">لوحة التحكم</div>
-
+                    
                     <div className="form-group">
                         <label>وضع الإنشاء</label>
                         <div className="mode-selector">

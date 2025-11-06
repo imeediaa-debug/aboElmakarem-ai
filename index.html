@@ -620,6 +620,108 @@
             border-radius: 50%;
         }
 
+        /* API Key Modal */
+        .api-key-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(13, 17, 23, 0.9);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .api-key-modal {
+            background-color: var(--surface-color);
+            padding: 2.5rem;
+            border-radius: var(--border-radius);
+            border: 1px solid var(--subtle-border-color);
+            box-shadow: var(--shadow-lg);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .api-key-modal h2 {
+            color: var(--on-background-color);
+            font-size: 1.75rem;
+        }
+
+        .api-key-modal p {
+            color: var(--on-surface-color);
+            line-height: 1.7;
+        }
+
+        .api-key-modal a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 700;
+        }
+        .api-key-modal a:hover {
+            text-decoration: underline;
+        }
+
+        .api-key-modal input {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: 1px solid var(--subtle-border-color);
+            background-color: var(--background-color);
+            color: var(--on-background-color);
+            font-family: inherit;
+            font-size: 1rem;
+            text-align: center;
+        }
+
+        .api-key-modal button {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: none;
+            background: var(--primary-color);
+            color: #0d1117;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .api-key-modal button:disabled {
+            background-color: #30363d;
+            color: #7d8590;
+            cursor: not-allowed;
+        }
+
+        .api-key-modal button:not(:disabled):hover {
+            background-color: var(--primary-hover-color);
+        }
+
+        .change-api-key-btn {
+            width: 100%;
+            padding: 0.5rem;
+            border-radius: 8px;
+            border: 1px solid var(--subtle-border-color);
+            background-color: transparent;
+            color: var(--on-surface-color);
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: -0.5rem; /* to space it from the next element */
+            font-family: inherit;
+            font-weight: 500;
+        }
+        .change-api-key-btn:hover {
+            border-color: var(--error-color);
+            color: var(--error-color);
+            background-color: var(--error-surface-color);
+        }
+
 
         @media (max-width: 1200px) {
             .main-container {
